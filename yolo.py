@@ -1,28 +1,45 @@
 import cv2
 import torch
 import yolov5
-#from helper import create_video_writer
+import pandas as pd
+import datetime
 
-
-# define some constants
-CONFIDENCE_THRESHOLD = 0.8
-GREEN = (0, 255, 0)
 
 # initialize the video capture object
 cap = cv2.VideoCapture(0)
 
 model = yolov5.load('crowdhuman_yolov5m.pt')
+model.conf = 0.5  # NMS confidence threshold
+model.iou = 0.45  # NMS IoU threshold
+model.agnostic = True  # NMS class-agnostic
+model.multi_label = False  # NMS multiple labels per box
+model.classes = 1  # (optional list) filter by class, i.e. = [0, 15, 16] for COCO persons, cats and dogs
+model.max_det = 1000  # maximum number of detections per image
+model.amp = False  # Automatic Mixed Precision (AMP) inference
+model.line_thickness = 1  # bounding box thickness (pixels)
 
 while True:
     # start time to compute the fps
     # start = datetime.datetime.now()
 
     ret, frame = cap.read()
+    #img = cv2.imread('3.jpg')
 
     # run the YOLO model on the frame
     results = model(frame)
 
-    print('results:', results.boxes.data.tolist())
+    # # parse results
+    # predictions = results.pred[0]
+    # boxes = predictions[:, :4] # x1, y1, x2, y2
+    # scores = predictions[:, 4]
+    # categories = predictions[:, 5]
+    # # print the results
+
+    table = results.pandas().xyxy[0]
+    # results.pandas().xyxy[0].drop(results.pandas().xyxy[0][results.pandas().xyxy[0].name != 'head'].index, inplace=True)
+
+    print(table)
+    print('-'*50)
 
     # show detection bounding boxes on image
     results.render()
