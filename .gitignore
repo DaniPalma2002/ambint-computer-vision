@@ -1,3 +1,5 @@
 datasets/
 *.pt
-models/
+**.pt
+**.cfg
+**.weights
