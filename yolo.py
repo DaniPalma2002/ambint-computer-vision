@@ -1,39 +1,83 @@
+import time
+
 import cv2
-import yolov5
+import numpy as np
 
-# initialize the video capture object
-cap = cv2.VideoCapture(0)
 
-model = yolov5.load('crowdhuman_yolov5m.pt')
-model.conf = 0.5  # NMS confidence threshold
-model.iou = 0.45  # NMS IoU threshold
-model.agnostic = True  # NMS class-agnostic
-model.multi_label = False  # NMS multiple labels per box
-model.classes = 1  # (optional list) filter by class, i.e. = [0, 15, 16] for COCO persons, cats and dogs
-model.max_det = 1000  # maximum number of detections per image
-model.amp = False  # Automatic Mixed Precision (AMP) inference
-model.line_thickness = 1  # bounding box thickness (pixels)
+class YOLO:
 
-while True:
-    ret, frame = cap.read()
-    #img = cv2.imread('3.jpg')
+    def __init__(self, config, model, labels, size=416, confidence=0.5, threshold=0.3):
+        self.confidence = confidence
+        self.threshold = threshold
+        self.size = size
+        self.output_names = []
+        self.labels = labels
+        try:
+            self.net = cv2.dnn.readNetFromDarknet(config, model)
+        except:
+            raise ValueError("Couldn't find the models!\nDid you forget to download them manually (and keep in the "
+                             "correct directory, models/) or run the shell script?")
 
-    # run the YOLO model on the frame
-    results: yolov5.models.common.Detections = model(frame)
+        ln = self.net.getLayerNames()
+        for i in self.net.getUnconnectedOutLayers():
+            self.output_names.append(ln[int(i) - 1])
 
-    table = results.pandas().xyxy[0]
+    def inference_from_file(self, file):
+        mat = cv2.imread(file)
+        return self.inference(mat)
 
-    print(table)
-    print('-'*50)
+    def inference(self, image):
+        ih, iw = image.shape[:2]
 
-    # show detection bounding boxes on image
-    results.render()
+        blob = cv2.dnn.blobFromImage(image, 1 / 255.0, (self.size, self.size), swapRB=True, crop=False)
+        self.net.setInput(blob)
+        start = time.time()
+        layerOutputs = self.net.forward(self.output_names)
+        end = time.time()
+        inference_time = end - start
 
-    # show the frame to our screen
-    cv2.imshow("Frame", frame)
+        boxes = []
+        confidences = []
+        classIDs = []
 
-    if cv2.waitKey(1) == ord("q"):
-        break
+        for output in layerOutputs:
+            # loop over each of the detections
+            for detection in output:
+                # extract the class ID and confidence (i.e., probability) of
+                # the current object detection
+                scores = detection[5:]
+                classID = np.argmax(scores)
+                confidence = scores[classID]
+                # filter out weak predictions by ensuring the detected
+                # probability is greater than the minimum probability
+                if confidence > self.confidence:
+                    # scale the bounding box coordinates back relative to the
+                    # size of the image, keeping in mind that YOLO actually
+                    # returns the center (x, y)-coordinates of the bounding
+                    # box followed by the boxes' width and height
+                    box = detection[0:4] * np.array([iw, ih, iw, ih])
+                    (centerX, centerY, width, height) = box.astype("int")
+                    # use the center (x, y)-coordinates to derive the top and
+                    # and left corner of the bounding box
+                    x = int(centerX - (width / 2))
+                    y = int(centerY - (height / 2))
+                    # update our list of bounding box coordinates, confidences,
+                    # and class IDs
+                    boxes.append([x, y, int(width), int(height)])
+                    confidences.append(float(confidence))
+                    classIDs.append(classID)
 
-cap.release()
-cv2.destroyAllWindows()
+        idxs = cv2.dnn.NMSBoxes(boxes, confidences, self.confidence, self.threshold)
+
+        results = []
+        if len(idxs) > 0:
+            for i in idxs.flatten():
+                # extract the bounding box coordinates
+                x, y = (boxes[i][0], boxes[i][1])
+                w, h = (boxes[i][2], boxes[i][3])
+                id = classIDs[i]
+                confidence = confidences[i]
+
+                results.append((id, self.labels[id], confidence, x, y, w, h))
+
+        return iw, ih, inference_time, results
