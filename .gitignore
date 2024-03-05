@@ -3,3 +3,4 @@ datasets/
 **.pt
 **.cfg
 **.weights
+__pycache__/*
