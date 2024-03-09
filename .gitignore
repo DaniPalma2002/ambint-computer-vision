@@ -4,3 +4,6 @@ datasets/
 **.cfg
 **.weights
 __pycache__/*
+grpc_files/*
+python/*
+models/__pycache__/*

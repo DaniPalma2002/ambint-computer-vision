@@ -1,7 +1,10 @@
+from os import path
+import sys
 import time
 import cv2
-from requests import head
 import yolov5
+
+sys.path.insert(0, path.abspath(path.join(path.dirname(__file__), 'models')))
 from yolo import YOLO
 
 headModel = yolov5.load('models/crowdhuman_yolov5m.pt')
@@ -13,34 +16,27 @@ headModel.classes = 1  # (optional list) filter by class, i.e. = [0, 15, 16] for
 headModel.max_det = 1000  # maximum number of detections per image
 headModel.amp = False  # Automatic Mixed Precision (AMP) inference
 headModel.line_thickness = 1  # bounding box thickness (pixels)
+headModel.device = 'cuda'
 
 handModel = YOLO("models/cross-hands.cfg", "models/cross-hands.weights", ["hand"])
 handModel.confidence = 0.2
 handModel.size = 416
+handModel.device = 'cuda'
 
-# initialize the video capture object
-cap = cv2.VideoCapture(0)
 
-while True:
+def processingFrame(frame):
     # Record the time before processing the frame
     start_time = time.time()
-
-    ret, frame = cap.read()
-    # frame = cv2.imread('images/3.jpg')
 
     # head detection ===========================================================
     results = headModel(frame)
     table = results.pandas().xyxy[0]
-    # print(f'Number of heads: {len(table)}')
 
     # show detection bounding boxes on image
     results.render()
 
     # hand detection ===========================================================
     width, height, inference_time, results = handModel.inference(frame)
-
-    # # sort by confidence
-    # results.sort(key=lambda x: x[2])
 
     # how many hands
     hand_count = len(results)
@@ -62,8 +58,11 @@ while True:
     cv2.putText(frame, f'Heads: {len(table)}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
     cv2.putText(frame, f'Hands: {hand_count}', (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
+
     # Calculate the FPS
     fps = 1.0 / (time.time() - start_time)
+
+    print(f'Heads: {len(table)} | Hands: {hand_count} | FPS: {fps:.2f}')
 
     # Display the FPS on the frame
     cv2.putText(frame, f'FPS: {fps:.2f}', (frame.shape[1] - 200, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
@@ -71,8 +70,21 @@ while True:
     # show the frame to our screen
     cv2.imshow("Frame", frame)
 
-    if cv2.waitKey(1) == ord("q"):
-        break
+    cv2.waitKey(1)
 
-cap.release()
-cv2.destroyAllWindows()
+
+def headHandCameraDetection():
+    # initialize the video capture object
+    cap = cv2.VideoCapture(0)
+
+    while True:
+        processingFrame(cap.read()[1])
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+
+if __name__ == "__main__":
+    headHandCameraDetection()
