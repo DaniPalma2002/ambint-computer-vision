@@ -4,5 +4,5 @@
 
 To (re)generate grpc code:
 ```bash
-python -m grpc_tools.protoc -I./proto --python_out=./proto --grpc_python_out=./proto ./proto/image.proto   
+python -m grpc_tools.protoc -I./grpc_files --python_out=./grpc_files --grpc_python_out=./grpc_files ./grpc_files/image.proto   
 ```

@@ -10,13 +10,13 @@ from yolo import YOLO
 headModel = yolov5.load('models/crowdhuman_yolov5m.pt')
 headModel.conf = 0.5  # NMS confidence threshold
 headModel.iou = 0.45  # NMS IoU threshold
-headModel.agnostic = True  # NMS class-agnostic
-headModel.multi_label = False  # NMS multiple labels per box
+#headModel.agnostic = True  # NMS class-agnostic
+#headModel.multi_label = False  # NMS multiple labels per box
 headModel.classes = 1  # (optional list) filter by class, i.e. = [0, 15, 16] for COCO persons, cats and dogs
-headModel.max_det = 1000  # maximum number of detections per image
-headModel.amp = False  # Automatic Mixed Precision (AMP) inference
-headModel.line_thickness = 1  # bounding box thickness (pixels)
-headModel.device = 'cuda'
+#headModel.max_det = 1000  # maximum number of detections per image
+#headModel.amp = False  # Automatic Mixed Precision (AMP) inference
+#headModel.line_thickness = 1  # bounding box thickness (pixels)
+#headModel.device = 'cuda'
 
 handModel = YOLO("models/cross-hands.cfg", "models/cross-hands.weights", ["hand"])
 handModel.confidence = 0.2
@@ -31,6 +31,7 @@ def processingFrame(frame):
     # head detection ===========================================================
     results = headModel(frame)
     table = results.pandas().xyxy[0]
+    print(table)
 
     # show detection bounding boxes on image
     results.render()
@@ -75,7 +76,7 @@ def processingFrame(frame):
 
 def headHandCameraDetection():
     # initialize the video capture object
-    cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture(1)
 
     while True:
         processingFrame(cap.read()[1])

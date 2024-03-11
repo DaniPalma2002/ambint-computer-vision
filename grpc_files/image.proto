@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+service ImageService {
+  rpc Image (FrameSend) returns (FrameRecv) {}
+}
+
+message FrameSend {
+  bytes frame = 1;
+}
+
+message FrameRecv {
+}
