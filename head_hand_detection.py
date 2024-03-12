@@ -7,6 +7,7 @@ import yolov5
 import requests
 import json
 import numpy as np
+import pandas as pd
 
 sys.path.insert(0, path.abspath(path.join(path.dirname(__file__), 'models')))
 from yolo import YOLO
@@ -14,37 +15,106 @@ from yolo import YOLO
 headModel = yolov5.load('models/crowdhuman_yolov5m.pt')
 headModel.conf = 0.5  # NMS confidence threshold
 headModel.iou = 0.45  # NMS IoU threshold
-#headModel.agnostic = True  # NMS class-agnostic
-#headModel.multi_label = False  # NMS multiple labels per box
+headModel.agnostic = True  # NMS class-agnostic
+headModel.multi_label = False  # NMS multiple labels per box
 headModel.classes = 1  # (optional list) filter by class, i.e. = [0, 15, 16] for COCO persons, cats and dogs
-#headModel.max_det = 1000  # maximum number of detections per image
-#headModel.amp = False  # Automatic Mixed Precision (AMP) inference
-#headModel.line_thickness = 1  # bounding box thickness (pixels)
-#headModel.device = 'cuda'
+headModel.max_det = 1000  # maximum number of detections per image
+headModel.amp = False  # Automatic Mixed Precision (AMP) inference
+headModel.line_thickness = 1  # bounding box thickness (pixels)
+headModel.device = 'cuda'
 
 handModel = YOLO("models/cross-hands.cfg", "models/cross-hands.weights", ["hand"])
 handModel.confidence = 0.2
 handModel.size = 416
 handModel.device = 'cuda'
 
+# ====Global variables==========================================================
+head_count = 0
+hand_count = 0
+
 head_median = []
 
+head_detection_flag = 0
+hand_detection_flag = 0
+
+head_matrix = np.zeros([3, 2], dtype = int)
+# ==============================================================================
+
 def processingFrame(frame):
-    global head_median
-    # Record the time before processing the frame
-    start_time = time.time()
+    global head_count, hand_count, head_median, head_detection_flag, hand_detection_flag
+
+    hand_detection_flag += 1
+    head_detection_flag += 1
+
+    # divide frame in sections
+    height, width, _ = frame.shape
+
+    # Divide the frame into a 3x3 grid
+    section_width = width // 2
+    section_height = height // 3
+
+    # Draw the grid on the frame
+    for i in range(1, 3):
+        cv2.line(frame, (0, i * section_height), (width, i * section_height), (0, 255, 0), 1)
+
+    for i in range(1, 2):    
+        cv2.line(frame, (i * section_width, 0), (i * section_width, height), (0, 255, 0), 1)
+
 
     # head detection ===========================================================
+    if head_detection_flag > 5:
+        head_detection_flag = 0
+        head_count = headDetection(frame)
+        head_median.append(head_count)
+
+    # hand detection ===========================================================
+    if hand_detection_flag > 5:
+        hand_detection_flag = 0
+        hand_count = handDetection(frame)
+
+    # number of hands and heads 
+    cv2.putText(frame, f'Heads: {head_count}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+    cv2.putText(frame, f'Hands: {hand_count}', (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
+    # send request to server with head count
+    if len(head_median) == 15:
+        # remove outliers
+        for i in range(3):
+            head_median.remove(np.max(head_median))
+        res = np.max(head_median)
+        head_median = []
+        postRequest(int(res))
+
+    if (head_count > 0):
+        print(f'Heads: {head_count} | Hands: {hand_count}')
+
+    # show the frame to our screen
+    cv2.imshow("Frame", frame)
+
+    cv2.waitKey(1)
+
+
+def headDetection(frame):
     results = headModel(frame)
     table = results.pandas().xyxy[0]
     head_count = len(table)
-
-    # show detection bounding boxes on image
     results.render()
 
-    # hand detection ===========================================================
-    width, height, inference_time, results = handModel.inference(frame)
+    for index, row in table.iterrows():
+        x1 = int(row['xmin'])
+        y1 = int(row['ymin'])
+        x2 = int(row['xmax'])
+        y2 = int(row['ymax'])
+        # get centre of the head
+        cx = x1 + (x2 - x1) / 2
+        cy = y1 + (y2 - y1) / 2
+        print(f'Head: ({cx},{cy})')
 
+    return head_count
+
+def handDetection(frame):
+    width, height, inference_time, results = handModel.inference(frame)
+    print(f'hand Inference time: {inference_time}')
     # how many hands
     hand_count = len(results)
 
@@ -61,34 +131,12 @@ def processingFrame(frame):
         cv2.putText(frame, text, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX,
                     0.5, color, 2)
 
-    # number of hands and heads 
-    cv2.putText(frame, f'Heads: {head_count}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-    cv2.putText(frame, f'Hands: {hand_count}', (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-
-
-    # Calculate the FPS
-    fps = 1.0 / (time.time() - start_time)
-
-    print(f'Heads: {head_count} | Hands: {hand_count} | FPS: {fps:.2f}')
-
-    head_median.append(head_count)
-    if (len(head_median) == 11):
-        res = np.median(head_median)
-        head_median = []
-        postReq(int(res))
-
-    # Display the FPS on the frame
-    cv2.putText(frame, f'FPS: {fps:.2f}', (frame.shape[1] - 200, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
-    # show the frame to our screen
-    cv2.imshow("Frame", frame)
-
-    cv2.waitKey(1)
+    return hand_count
 
 
 def headHandCameraDetection():
     # initialize the video capture object
-    cap = cv2.VideoCapture(1)
+    cap = cv2.VideoCapture(0)
 
     while True:
         processingFrame(cap.read()[1])
@@ -98,7 +146,7 @@ def headHandCameraDetection():
     cap.release()
     cv2.destroyAllWindows()
 
-def postReq(heads):
+def postRequest(heads):
     # The URL to which you are sending the POST request
     url = 'https://ami-dashboard-vercel-v2.vercel.app/data'
 

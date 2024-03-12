@@ -24,6 +24,7 @@ import numpy as np
 sys.path.insert(0, path.abspath(path.join(path.dirname(__file__), 'grpc_files')))
 from grpc_files import image_pb2 as pb2
 from grpc_files import image_pb2_grpc as pb2_grpc
+from google.protobuf import empty_pb2
 
 import head_hand_detection
 
@@ -31,7 +32,7 @@ class ImageService(pb2_grpc.ImageServiceServicer):
     def Image(self, request, context):
         #print("Received frame")
         imageHandler(request.frame)
-        return pb2.FrameRecv()
+        return empty_pb2.Empty()
 
 def imageHandler(frame_bytes):
     nparr = np.frombuffer(frame_bytes, np.uint8)
