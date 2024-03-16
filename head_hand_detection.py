@@ -1,13 +1,11 @@
-import math
+import asyncio
 from os import path
 import sys
-import time
 import cv2
 import yolov5
 import requests
 import json
 import numpy as np
-import pandas as pd
 
 sys.path.insert(0, path.abspath(path.join(path.dirname(__file__), 'models')))
 from yolo import YOLO
@@ -23,7 +21,7 @@ headModel.amp = False  # Automatic Mixed Precision (AMP) inference
 headModel.line_thickness = 1  # bounding box thickness (pixels)
 headModel.device = 'cuda'
 
-handModel = YOLO("models/cross-hands.cfg", "models/cross-hands.weights", ["hand"])
+handModel = YOLO("models/cross-hands-yolov4-tiny.cfg", "models/cross-hands-yolov4-tiny.weights", ["hand"])
 handModel.confidence = 0.2
 handModel.size = 416
 handModel.device = 'cuda'
@@ -32,43 +30,65 @@ handModel.device = 'cuda'
 head_count = 0
 hand_count = 0
 
-head_median = []
+head_list = []
 
 head_detection_flag = 0
 hand_detection_flag = 0
 
-head_matrix = np.zeros([3, 2], dtype = int)
+SECTION_WIDTH = 0
+SECTION_HEIGHT = 0
+height = 0
+width = 0
+
+HEAD_FLAG_SIZE = 10
+HAND_FLAG_SIZE = 50000
+HEAD_LIST_SIZE = 15
 # ==============================================================================
 
+def headHandCameraDetection():
+    global SECTION_HEIGHT, SECTION_WIDTH, height, width
+    # initialize the video capture object
+    cap = cv2.VideoCapture(1)
+
+    # divide frame in sections
+    height, width, _ = cap.read()[1].shape
+    
+    # Divide the frame into a 2x3 grid
+    SECTION_WIDTH = width // 2
+    SECTION_HEIGHT = height // 3
+
+    while True:
+        processingFrame(cap.read()[1])
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+
 def processingFrame(frame):
-    global head_count, hand_count, head_median, head_detection_flag, hand_detection_flag
+    global head_count, hand_count, head_list, head_detection_flag, hand_detection_flag
 
     hand_detection_flag += 1
     head_detection_flag += 1
 
-    # divide frame in sections
-    height, width, _ = frame.shape
-
-    # Divide the frame into a 3x3 grid
-    section_width = width // 2
-    section_height = height // 3
-
     # Draw the grid on the frame
     for i in range(1, 3):
-        cv2.line(frame, (0, i * section_height), (width, i * section_height), (0, 255, 0), 1)
+        cv2.line(frame, (0, i * SECTION_HEIGHT), (width, i * SECTION_HEIGHT), (0, 255, 0), 1)
 
     for i in range(1, 2):    
-        cv2.line(frame, (i * section_width, 0), (i * section_width, height), (0, 255, 0), 1)
+        cv2.line(frame, (i * SECTION_WIDTH, 0), (i * SECTION_WIDTH, height), (0, 255, 0), 1)
 
 
     # head detection ===========================================================
-    if head_detection_flag > 5:
+    if head_detection_flag > HEAD_FLAG_SIZE:
         head_detection_flag = 0
-        head_count = headDetection(frame)
-        head_median.append(head_count)
+        head = headDetection(frame)
+        head_count = head[0]
+        head_list.append(head)
 
     # hand detection ===========================================================
-    if hand_detection_flag > 5:
+    if hand_detection_flag > HAND_FLAG_SIZE:
         hand_detection_flag = 0
         hand_count = handDetection(frame)
 
@@ -77,15 +97,19 @@ def processingFrame(frame):
     cv2.putText(frame, f'Hands: {hand_count}', (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
 
     # send request to server with head count
-    if len(head_median) == 15:
+    if len(head_list) >= HEAD_LIST_SIZE:
         # remove outliers
-        for i in range(3):
-            head_median.remove(np.max(head_median))
-        res = np.max(head_median)
-        head_median = []
-        postRequest(int(res))
+        # for i in range(HEAD_LIST_SIZE//5):
+        #     head_list.remove(np.max([x[0] for x in head_list]))
+        #res = np.max(head_list)
+        res = max(head_list[::-1], key=lambda x: x[0])
+        matrix = storeHeadPositionsMatrix(res[1])
+        print(matrix)
+        head_list = []
+        postRequest(int(res[0]))
+        # TODO send matrix to server
 
-    if (head_count > 0):
+    if (head_count > 0 or hand_count > 0):
         print(f'Heads: {head_count} | Hands: {hand_count}')
 
     # show the frame to our screen
@@ -100,6 +124,12 @@ def headDetection(frame):
     head_count = len(table)
     results.render()
 
+    return (head_count, table)
+
+
+def storeHeadPositionsMatrix(table):
+    head_matrix = np.zeros([3, 2], dtype = int)
+
     for index, row in table.iterrows():
         x1 = int(row['xmin'])
         y1 = int(row['ymin'])
@@ -110,7 +140,25 @@ def headDetection(frame):
         cy = y1 + (y2 - y1) / 2
         print(f'Head: ({cx},{cy})')
 
-    return head_count
+        # store head position in matrix
+        if (cy < SECTION_HEIGHT):
+            if (cx < SECTION_WIDTH):
+                head_matrix[0][0] += 1
+            else:
+                head_matrix[0][1] += 1
+        elif (cy < 2 * SECTION_HEIGHT):
+            if (cx < SECTION_WIDTH):
+                head_matrix[1][0] += 1
+            else:
+                head_matrix[1][1] += 1
+        else:
+            if (cx < SECTION_WIDTH):
+                head_matrix[2][0] += 1
+            else:
+                head_matrix[2][1] += 1
+
+    return head_matrix
+
 
 def handDetection(frame):
     width, height, inference_time, results = handModel.inference(frame)
@@ -134,25 +182,14 @@ def handDetection(frame):
     return hand_count
 
 
-def headHandCameraDetection():
-    # initialize the video capture object
-    cap = cv2.VideoCapture(0)
-
-    while True:
-        processingFrame(cap.read()[1])
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-    cap.release()
-    cv2.destroyAllWindows()
 
 def postRequest(heads):
     # The URL to which you are sending the POST request
-    url = 'https://ami-dashboard-vercel-v2.vercel.app/data'
+    url = 'https://smart-engagement-room.vercel.app/data'
 
     # The data you want to send in JSON format
     data = {
-        'info': heads,
+        'totalNumber': heads,
     }
 
     # Convert the Python dictionary to a JSON string
@@ -167,9 +204,9 @@ def postRequest(heads):
     # Check if the request was successful
     if response.status_code == 200:
         print('Success!')
-        # If response is JSON, you can parse it into a Python dictionary
-        response_data = response.json()
-        print(response_data)
+        if response.text:
+            response_data = response.text
+            print(response_data)
     else:
         print('Failed to send POST request')
         print('Status code:', response.status_code)

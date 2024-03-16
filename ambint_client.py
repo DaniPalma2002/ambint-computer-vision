@@ -27,7 +27,6 @@ def captureAndSendFrames(stub):
         stub.Image(pb2.FrameSend(frame=frame_bytes))
 
     cap.release()
-    cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     try:
