@@ -21,7 +21,7 @@ headModel.amp = False  # Automatic Mixed Precision (AMP) inference
 headModel.line_thickness = 1  # bounding box thickness (pixels)
 headModel.device = 'cuda'
 
-handModel = YOLO("models/cross-hands-yolov4-tiny.cfg", "models/cross-hands-yolov4-tiny.weights", ["hand"])
+handModel = YOLO("models/cross-hands.cfg", "models/cross-hands.weights", ["hand"])
 handModel.confidence = 0.2
 handModel.size = 416
 handModel.device = 'cuda'
@@ -40,9 +40,9 @@ SECTION_HEIGHT = 0
 height = 0
 width = 0
 
-HEAD_FLAG_SIZE = 10
-HAND_FLAG_SIZE = 50000
-HEAD_LIST_SIZE = 15
+HEAD_FLAG_SIZE = 4
+HAND_FLAG_SIZE = 50
+HEAD_LIST_SIZE = 10
 # ==============================================================================
 
 def headHandCameraDetection():
@@ -83,14 +83,20 @@ def processingFrame(frame):
     # head detection ===========================================================
     if head_detection_flag > HEAD_FLAG_SIZE:
         head_detection_flag = 0
-        head = headDetection(frame)
-        head_count = head[0]
-        head_list.append(head)
+        head_count, _ = headDetection(frame)
+        print(f'Heads: {head_count} | Hands: {hand_count}')
+        head_list.append(head_count)
+
 
     # hand detection ===========================================================
     if hand_detection_flag > HAND_FLAG_SIZE:
         hand_detection_flag = 0
-        hand_count = handDetection(frame)
+        hand_count, hand_results = handDetection(frame)
+        print(f'Heads: {head_count} | Hands: {hand_count}')
+        head_count, head_table = headDetection(frame)
+        matrix = storeHeadPositionsMatrix(frame, head_table, hand_results)
+        asyncio.run(matrixPostReq(matrix))
+            
 
     # number of hands and heads 
     cv2.putText(frame, f'Heads: {head_count}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
@@ -99,18 +105,11 @@ def processingFrame(frame):
     # send request to server with head count
     if len(head_list) >= HEAD_LIST_SIZE:
         # remove outliers
-        # for i in range(HEAD_LIST_SIZE//5):
-        #     head_list.remove(np.max([x[0] for x in head_list]))
-        #res = np.max(head_list)
-        res = max(head_list[::-1], key=lambda x: x[0])
-        matrix = storeHeadPositionsMatrix(res[1])
-        print(matrix)
+        for i in range(HEAD_LIST_SIZE//5):
+            head_list.remove(np.max(head_list))
+        res = np.max(head_list)
         head_list = []
-        postRequest(int(res[0]))
-        # TODO send matrix to server
-
-    if (head_count > 0 or hand_count > 0):
-        print(f'Heads: {head_count} | Hands: {hand_count}')
+        asyncio.run(headCountPostReq(int(res)))
 
     # show the frame to our screen
     cv2.imshow("Frame", frame)
@@ -118,19 +117,14 @@ def processingFrame(frame):
     cv2.waitKey(1)
 
 
-def headDetection(frame):
-    results = headModel(frame)
-    table = results.pandas().xyxy[0]
-    head_count = len(table)
-    results.render()
 
-    return (head_count, table)
+def storeHeadPositionsMatrix(frame, head_table, hand_results):
+    matrix = np.zeros([3, 2], dtype=object)
+    for i in range(3):
+        for j in range(2):
+            matrix[i][j] = [0,0]
 
-
-def storeHeadPositionsMatrix(table):
-    head_matrix = np.zeros([3, 2], dtype = int)
-
-    for index, row in table.iterrows():
+    for _, row in head_table.iterrows():
         x1 = int(row['xmin'])
         y1 = int(row['ymin'])
         x2 = int(row['xmax'])
@@ -138,36 +132,12 @@ def storeHeadPositionsMatrix(table):
         # get centre of the head
         cx = x1 + (x2 - x1) / 2
         cy = y1 + (y2 - y1) / 2
-        print(f'Head: ({cx},{cy})')
 
         # store head position in matrix
-        if (cy < SECTION_HEIGHT):
-            if (cx < SECTION_WIDTH):
-                head_matrix[0][0] += 1
-            else:
-                head_matrix[0][1] += 1
-        elif (cy < 2 * SECTION_HEIGHT):
-            if (cx < SECTION_WIDTH):
-                head_matrix[1][0] += 1
-            else:
-                head_matrix[1][1] += 1
-        else:
-            if (cx < SECTION_WIDTH):
-                head_matrix[2][0] += 1
-            else:
-                head_matrix[2][1] += 1
-
-    return head_matrix
-
-
-def handDetection(frame):
-    width, height, inference_time, results = handModel.inference(frame)
-    print(f'hand Inference time: {inference_time}')
-    # how many hands
-    hand_count = len(results)
+        sectionDetection(matrix, cx, cy, 0)
 
     # display hands
-    for detection in results[:hand_count]:
+    for detection in hand_results[:hand_count]:
         id, name, confidence, x, y, w, h = detection
         cx = x + (w / 2)
         cy = y + (h / 2)
@@ -179,11 +149,48 @@ def handDetection(frame):
         cv2.putText(frame, text, (x, y - 5), cv2.FONT_HERSHEY_SIMPLEX,
                     0.5, color, 2)
 
-    return hand_count
+        sectionDetection(matrix, cx, cy, 1)
+
+    return matrix
 
 
+def sectionDetection(matrix, cx, cy, flag):
+    if (cy < SECTION_HEIGHT):
+        if (cx < SECTION_WIDTH):
+            matrix[0][0][flag] += 1
+        else:
+            matrix[0][1][flag] += 1
+    elif (cy < 2 * SECTION_HEIGHT):
+        if (cx < SECTION_WIDTH):
+            matrix[1][0][flag] += 1
+        else:
+            matrix[1][1][flag] += 1
+    else:
+        if (cx < SECTION_WIDTH):
+            matrix[2][0][flag] += 1
+        else:
+            matrix[2][1][flag] += 1
 
-def postRequest(heads):
+
+def headDetection(frame):
+    results = headModel(frame)
+    table = results.pandas().xyxy[0]
+    head_count = len(table)
+    print(f'Heads: {head_count}')
+    results.render()
+
+    return head_count, table
+
+def handDetection(frame):
+    width, height, inference_time, results = handModel.inference(frame)
+    print(f'hand Inference time: {inference_time}')
+    # how many hands
+    hand_count = len(results)
+
+    return hand_count, results
+
+
+async def headCountPostReq(heads):
     # The URL to which you are sending the POST request
     url = 'https://smart-engagement-room.vercel.app/data'
 
@@ -192,8 +199,32 @@ def postRequest(heads):
         'totalNumber': heads,
     }
 
+    sendPostRequest(url, data)
+
+async def matrixPostReq(matrix: np.ndarray):
+    url = 'https://smart-engagement-room.vercel.app/regions'
+
+    data = {
+        'regions': [],
+    }
+
+    i = 1
+    for val in matrix.flatten():
+        data['regions'].append({
+            'id': i,
+            'number': val[0],
+            'question': True if val[1] > 0 else False
+        })
+        i += 1
+
+    sendPostRequest(url, data)
+
+# Send the POST request
+def sendPostRequest(url, data):
     # Convert the Python dictionary to a JSON string
     json_data = json.dumps(data)
+
+    print(json_data)
 
     # Set the appropriate headers for JSON - this is important!
     headers = {'Content-Type': 'application/json'}
