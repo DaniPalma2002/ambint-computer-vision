@@ -1,11 +1,12 @@
-import asyncio
 from os import path
 import sys
+import time
 import cv2
 import yolov5
 import requests
 import json
 import numpy as np
+import ambint_compreface
 
 sys.path.insert(0, path.abspath(path.join(path.dirname(__file__), 'models')))
 from yolo import YOLO
@@ -34,6 +35,7 @@ head_list = []
 
 head_detection_flag = 0
 hand_detection_flag = 0
+student_identification_flag = 0
 
 SECTION_WIDTH = 0
 SECTION_HEIGHT = 0
@@ -43,12 +45,14 @@ width = 0
 HEAD_FLAG_SIZE = 4
 HAND_FLAG_SIZE = 50
 HEAD_LIST_SIZE = 10
+
+STUDENT_FLAG_SIZE = 150
 # ==============================================================================
 
 def headHandCameraDetection():
     global SECTION_HEIGHT, SECTION_WIDTH, height, width
     # initialize the video capture object
-    cap = cv2.VideoCapture(1)
+    cap = cv2.VideoCapture(0)
 
     # divide frame in sections
     height, width, _ = cap.read()[1].shape
@@ -57,8 +61,12 @@ def headHandCameraDetection():
     SECTION_WIDTH = width // 2
     SECTION_HEIGHT = height // 3
 
+    identify_student = True
     while True:
-        processingFrame(cap.read()[1])
+        processingFrame(cap.read()[1], identify_student)
+        if cv2.waitKey(1) & 0xFF == ord('s'):
+            identify_student = not identify_student
+            print(f'IDENTIFY_STUDENT: {identify_student}')
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
@@ -66,11 +74,31 @@ def headHandCameraDetection():
     cv2.destroyAllWindows()
 
 
-def processingFrame(frame):
-    global head_count, hand_count, head_list, head_detection_flag, hand_detection_flag
+def processingFrame(frame, identify_student):
+    global head_count, hand_count, head_list, head_detection_flag, hand_detection_flag, student_identification_flag
 
     hand_detection_flag += 1
     head_detection_flag += 1
+    student_identification_flag += 1
+
+    # write in image if student identification is on
+    cv2.putText(frame, f'Student identification: {identify_student}', (200, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+
+    # student identification
+    if identify_student:
+        if student_identification_flag > STUDENT_FLAG_SIZE:
+            student_identification_flag = 0
+            # identify student
+            print('Identifying student')
+            cv2.imwrite('images/frame.jpg', frame)
+            students = ambint_compreface.identify_students()
+            students = list(set(students))
+            print('Students identified: ', '|'.join(students))
+            studentPostReq(students)
+        # show the frame to our screen
+        cv2.imshow("Frame", frame)
+        cv2.waitKey(1)
+        return
 
     # Draw the grid on the frame
     for i in range(1, 3):
@@ -95,7 +123,7 @@ def processingFrame(frame):
         print(f'Heads: {head_count} | Hands: {hand_count}')
         head_count, head_table = headDetection(frame)
         matrix = storeHeadPositionsMatrix(frame, head_table, hand_results)
-        asyncio.run(matrixPostReq(matrix))
+        matrixPostReq(matrix)
             
 
     # number of hands and heads 
@@ -109,7 +137,7 @@ def processingFrame(frame):
             head_list.remove(np.max(head_list))
         res = np.max(head_list)
         head_list = []
-        asyncio.run(headCountPostReq(int(res)))
+        headCountPostReq(int(res))
 
     # show the frame to our screen
     cv2.imshow("Frame", frame)
@@ -182,7 +210,7 @@ def headDetection(frame):
     return head_count, table
 
 def handDetection(frame):
-    width, height, inference_time, results = handModel.inference(frame)
+    _, _, inference_time, results = handModel.inference(frame)
     print(f'hand Inference time: {inference_time}')
     # how many hands
     hand_count = len(results)
@@ -190,7 +218,7 @@ def handDetection(frame):
     return hand_count, results
 
 
-async def headCountPostReq(heads):
+def headCountPostReq(heads):
     # The URL to which you are sending the POST request
     url = 'https://smart-engagement-room.vercel.app/data'
 
@@ -201,7 +229,7 @@ async def headCountPostReq(heads):
 
     sendPostRequest(url, data)
 
-async def matrixPostReq(matrix: np.ndarray):
+def matrixPostReq(matrix: np.ndarray):
     url = 'https://smart-engagement-room.vercel.app/regions'
 
     data = {
@@ -218,6 +246,16 @@ async def matrixPostReq(matrix: np.ndarray):
         i += 1
 
     sendPostRequest(url, data)
+
+def studentPostReq(students):
+    url = 'https://smart-engagement-room.vercel.app/api/attendance'
+
+    for student in students:
+        data = {
+            "ist-number": student,
+            "attendance": True,
+        }
+        sendPostRequest(url, data)
 
 # Send the POST request
 def sendPostRequest(url, data):

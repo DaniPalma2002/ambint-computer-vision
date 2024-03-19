@@ -8,3 +8,7 @@ grpc_files/*.py
 grpc_files/__pycache__
 python/*
 models/__pycache__/*
+images/frame.jpg
+.vscode/*
+env/**
+
