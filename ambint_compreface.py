@@ -24,7 +24,7 @@ def identify_students():
     result = recognition.recognize(image_path)
 
     json_res = json.dumps(result, indent=4, sort_keys=True)
-    print(json_res)
+    #print(json_res)
 
     list_of_students: List = []
     if 'code' in result:

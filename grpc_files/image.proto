@@ -1,12 +1,14 @@
 syntax = "proto3";
 
-import "google/protobuf/empty.proto";
-
 service ImageService {
-  rpc Image (FrameSend) returns (google.protobuf.Empty) {}
+  rpc Image (FrameSend) returns (FrameResponse) {}
 }
 
 message FrameSend {
   bytes frame = 1;
+}
+
+message FrameResponse {
+  bool camera_off = 1;
 }
 

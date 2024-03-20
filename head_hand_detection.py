@@ -29,6 +29,8 @@ handModel.device = 'cuda'
 
 # ====Global variables==========================================================
 head_count = 0
+zero_head_count_time = 0
+
 hand_count = 0
 
 head_list = []
@@ -42,11 +44,12 @@ SECTION_HEIGHT = 0
 height = 0
 width = 0
 
-HEAD_FLAG_SIZE = 4
-HAND_FLAG_SIZE = 50
-HEAD_LIST_SIZE = 10
+HEAD_FLAG_SIZE = 11
+HAND_FLAG_SIZE = 15
+HEAD_LIST_SIZE = 5
 
-STUDENT_FLAG_SIZE = 150
+STUDENT_FLAG_SIZE = 30
+students = []
 # ==============================================================================
 
 def headHandCameraDetection():
@@ -54,12 +57,12 @@ def headHandCameraDetection():
     # initialize the video capture object
     cap = cv2.VideoCapture(0)
 
-    # divide frame in sections
-    height, width, _ = cap.read()[1].shape
+    # # divide frame in sections
+    # height, width, _ = cap.read()[1].shape
     
-    # Divide the frame into a 2x3 grid
-    SECTION_WIDTH = width // 2
-    SECTION_HEIGHT = height // 3
+    # # Divide the frame into a 2x3 grid
+    # SECTION_WIDTH = width // 2
+    # SECTION_HEIGHT = height // 3
 
     identify_student = True
     while True:
@@ -75,8 +78,19 @@ def headHandCameraDetection():
 
 
 def processingFrame(frame, identify_student):
-    global head_count, hand_count, head_list, head_detection_flag, hand_detection_flag, student_identification_flag
+    global head_count, hand_count, head_list, head_detection_flag, hand_detection_flag, student_identification_flag, zero_head_count_time
+    global SECTION_HEIGHT, SECTION_WIDTH, height, width
+    global students
 
+    if SECTION_HEIGHT == 0 or SECTION_WIDTH == 0:
+        # divide frame in sections
+        height, width, _ = frame.shape
+        
+        # Divide the frame into a 2x3 grid
+        SECTION_WIDTH = width // 2
+        SECTION_HEIGHT = height // 3
+
+    original_frame = frame.copy()
     hand_detection_flag += 1
     head_detection_flag += 1
     student_identification_flag += 1
@@ -86,11 +100,12 @@ def processingFrame(frame, identify_student):
 
     # student identification
     if identify_student:
+        cv2.putText(frame, f'Students identified: {' '.join(students)}', (10, height - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
         if student_identification_flag > STUDENT_FLAG_SIZE:
             student_identification_flag = 0
             # identify student
             print('Identifying student')
-            cv2.imwrite('images/frame.jpg', frame)
+            cv2.imwrite('images/frame.jpg', original_frame)
             students = ambint_compreface.identify_students()
             students = list(set(students))
             print('Students identified: ', '|'.join(students))
@@ -135,9 +150,17 @@ def processingFrame(frame, identify_student):
         # remove outliers
         for i in range(HEAD_LIST_SIZE//5):
             head_list.remove(np.max(head_list))
-        res = np.max(head_list)
+        head_count_max = np.max(head_list)
+        # timer to see if camera needs to turn off
+        if head_count_max == 0:
+            zero_head_count_time += 1
+            if zero_head_count_time > 5:
+                print('timeout, turning off camera')
+                zero_head_count_time = 0
+                head_list = []
+                return 'off'
         head_list = []
-        headCountPostReq(int(res))
+        headCountPostReq(int(head_count_max))
 
     # show the frame to our screen
     cv2.imshow("Frame", frame)
@@ -204,7 +227,6 @@ def headDetection(frame):
     results = headModel(frame)
     table = results.pandas().xyxy[0]
     head_count = len(table)
-    print(f'Heads: {head_count}')
     results.render()
 
     return head_count, table

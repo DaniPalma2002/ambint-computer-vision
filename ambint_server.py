@@ -28,16 +28,30 @@ from google.protobuf import empty_pb2
 
 import head_hand_detection
 
+identify_student = True
+
 class ImageService(pb2_grpc.ImageServiceServicer):
     def Image(self, request, context):
         #print("Received frame")
-        imageHandler(request.frame)
-        return empty_pb2.Empty()
+        if not imageHandler(request.frame):
+            return pb2.FrameResponse(camera_off=True)
+        return pb2.FrameResponse(camera_off=False)
 
 def imageHandler(frame_bytes):
+    global identify_student
     nparr = np.frombuffer(frame_bytes, np.uint8)
     img_np = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    head_hand_detection.processingFrame(img_np)
+
+    ret = head_hand_detection.processingFrame(img_np, identify_student)
+    if cv2.waitKey(1) & 0xFF == ord('s'):
+        identify_student = not identify_student
+        print(f'IDENTIFY_STUDENT: {identify_student}')
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        exit()
+
+    if ret == 'off':
+        return False
+    return True
     
 
 def serve():
