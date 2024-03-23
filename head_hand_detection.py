@@ -29,7 +29,7 @@ handModel.device = 'cuda'
 
 # ====Global variables==========================================================
 head_count = 0
-zero_head_count_time = 0
+timeout = 0
 
 hand_count = 0
 
@@ -44,8 +44,8 @@ SECTION_HEIGHT = 0
 height = 0
 width = 0
 
-HEAD_FLAG_SIZE = 11
-HAND_FLAG_SIZE = 15
+HEAD_FLAG_SIZE = 16
+HAND_FLAG_SIZE = 10
 HEAD_LIST_SIZE = 5
 
 STUDENT_FLAG_SIZE = 30
@@ -56,13 +56,6 @@ def headHandCameraDetection():
     global SECTION_HEIGHT, SECTION_WIDTH, height, width
     # initialize the video capture object
     cap = cv2.VideoCapture(0)
-
-    # # divide frame in sections
-    # height, width, _ = cap.read()[1].shape
-    
-    # # Divide the frame into a 2x3 grid
-    # SECTION_WIDTH = width // 2
-    # SECTION_HEIGHT = height // 3
 
     identify_student = True
     while True:
@@ -78,7 +71,7 @@ def headHandCameraDetection():
 
 
 def processingFrame(frame, identify_student):
-    global head_count, hand_count, head_list, head_detection_flag, hand_detection_flag, student_identification_flag, zero_head_count_time
+    global head_count, hand_count, head_list, head_detection_flag, hand_detection_flag, student_identification_flag, timeout
     global SECTION_HEIGHT, SECTION_WIDTH, height, width
     global students
 
@@ -95,33 +88,29 @@ def processingFrame(frame, identify_student):
     head_detection_flag += 1
     student_identification_flag += 1
 
-    # write in image if student identification is on
-    cv2.putText(frame, f'Student identification: {identify_student}', (200, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
-
     # student identification
     if identify_student:
         cv2.putText(frame, f'Students identified: {' '.join(students)}', (10, height - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
         if student_identification_flag > STUDENT_FLAG_SIZE:
             student_identification_flag = 0
             # identify student
-            print('Identifying student')
             cv2.imwrite('images/frame.jpg', original_frame)
             students = ambint_compreface.identify_students()
             students = list(set(students))
+            if len(students) == 0:
+                timeout += 1
+                if timeout > 10:
+                    print('timeout, turning off camera')
+                    timeout = 0
+                    return 'off'
+            else:
+                timeout = 0
             print('Students identified: ', '|'.join(students))
             studentPostReq(students)
         # show the frame to our screen
         cv2.imshow("Frame", frame)
         cv2.waitKey(1)
         return
-
-    # Draw the grid on the frame
-    for i in range(1, 3):
-        cv2.line(frame, (0, i * SECTION_HEIGHT), (width, i * SECTION_HEIGHT), (0, 255, 0), 1)
-
-    for i in range(1, 2):    
-        cv2.line(frame, (i * SECTION_WIDTH, 0), (i * SECTION_WIDTH, height), (0, 255, 0), 1)
-
 
     # head detection ===========================================================
     if head_detection_flag > HEAD_FLAG_SIZE:
@@ -140,11 +129,6 @@ def processingFrame(frame, identify_student):
         matrix = storeHeadPositionsMatrix(frame, head_table, hand_results)
         matrixPostReq(matrix)
             
-
-    # number of hands and heads 
-    cv2.putText(frame, f'Heads: {head_count}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-    cv2.putText(frame, f'Hands: {hand_count}', (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-
     # send request to server with head count
     if len(head_list) >= HEAD_LIST_SIZE:
         # remove outliers
@@ -153,14 +137,29 @@ def processingFrame(frame, identify_student):
         head_count_max = np.max(head_list)
         # timer to see if camera needs to turn off
         if head_count_max == 0:
-            zero_head_count_time += 1
-            if zero_head_count_time > 5:
+            timeout += 1
+            if timeout > 5:
                 print('timeout, turning off camera')
-                zero_head_count_time = 0
+                timeout = 0
                 head_list = []
                 return 'off'
         head_list = []
         headCountPostReq(int(head_count_max))
+
+    # write in image if student identification is on
+    cv2.putText(frame, f'Student identification: {identify_student}', (200, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+
+    # Draw the grid on the frame
+    for i in range(1, 3):
+        cv2.line(frame, (0, i * SECTION_HEIGHT), (width, i * SECTION_HEIGHT), (0, 255, 0), 1)
+
+    for i in range(1, 2):    
+        cv2.line(frame, (i * SECTION_WIDTH, 0), (i * SECTION_WIDTH, height), (0, 255, 0), 1)
+
+    # number of hands and heads 
+    cv2.putText(frame, f'Heads: {head_count}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+    cv2.putText(frame, f'Hands: {hand_count}', (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+
 
     # show the frame to our screen
     cv2.imshow("Frame", frame)
@@ -233,7 +232,7 @@ def headDetection(frame):
 
 def handDetection(frame):
     _, _, inference_time, results = handModel.inference(frame)
-    print(f'hand Inference time: {inference_time}')
+    #print(f'hand Inference time: {inference_time}')
     # how many hands
     hand_count = len(results)
 
@@ -242,7 +241,7 @@ def handDetection(frame):
 
 def headCountPostReq(heads):
     # The URL to which you are sending the POST request
-    url = 'https://smart-engagement-room.vercel.app/data'
+    url = 'https://smart-engagement-room.vercel.app/api/post-statistics'
 
     # The data you want to send in JSON format
     data = {
@@ -252,7 +251,7 @@ def headCountPostReq(heads):
     sendPostRequest(url, data)
 
 def matrixPostReq(matrix: np.ndarray):
-    url = 'https://smart-engagement-room.vercel.app/regions'
+    url = 'https://smart-engagement-room.vercel.app/api/post-regions'
 
     data = {
         'regions': [],
@@ -270,7 +269,7 @@ def matrixPostReq(matrix: np.ndarray):
     sendPostRequest(url, data)
 
 def studentPostReq(students):
-    url = 'https://smart-engagement-room.vercel.app/api/attendance'
+    url = 'https://smart-engagement-room.vercel.app/api/post-attendance'
 
     for student in students:
         data = {
