@@ -81,7 +81,7 @@ def processingFrame(frame, identify_student):
         
         # Divide the frame into a 2x3 grid
         SECTION_WIDTH = width // 2
-        SECTION_HEIGHT = height // 3
+        SECTION_HEIGHT = height // 2
 
     original_frame = frame.copy()
     hand_detection_flag += 1
@@ -90,7 +90,6 @@ def processingFrame(frame, identify_student):
 
     # student identification
     if identify_student:
-        cv2.putText(frame, f'Students identified: {' '.join(students)}', (10, height - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
         if student_identification_flag > STUDENT_FLAG_SIZE:
             student_identification_flag = 0
             # identify student
@@ -107,6 +106,7 @@ def processingFrame(frame, identify_student):
                 timeout = 0
             print('Students identified: ', '|'.join(students))
             studentPostReq(students)
+        cv2.putText(frame, f'Students identified: {' '.join(students)}', (10, height - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
         # show the frame to our screen
         cv2.imshow("Frame", frame)
         cv2.waitKey(1)
