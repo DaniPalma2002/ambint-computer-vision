@@ -13,7 +13,9 @@ from grpc_files import image_pb2_grpc as pb2_grpc
 movement_detected = False
 movement_lock = threading.Lock()
 
-broker = '192.168.1.79'
+SERVER_IP = "192.168.37.55"
+
+broker = '192.168.37.199'
 port = 1883
 topic = "ambint/sensor"
 client_id = f'python-mqtt-{random.randint(0, 1000)}'
@@ -52,7 +54,7 @@ def run():
     subscribe_thread.start()
     mqtt_client.loop_start()
 
-    with grpc.insecure_channel("192.168.1.75:50051") as channel:
+    with grpc.insecure_channel(f"{SERVER_IP}:50051") as channel:
         stub = pb2_grpc.ImageServiceStub(channel)
         captureAndSendFrames(stub)
 
